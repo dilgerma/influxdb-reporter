@@ -9,7 +9,7 @@ import java.util.function.Supplier;
  * Could be something like Service Name, Hostname etc. - everything that might
  * identify this service.
  */
-public interface ServiceInfoProvider extends Supplier<Map<String, String>> {
+public interface InfoProvider extends Supplier<Map<String, String>> {
 
     ServiceInfo serviceInfo();
 

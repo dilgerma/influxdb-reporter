@@ -1,11 +1,9 @@
 package de.effectivetrainings.metrics.influx;
 
+import com.codahale.metrics.*;
+import com.codahale.metrics.Timer;
 import com.google.common.collect.Lists;
-import de.effectivetrainings.metrics.Measurement;
-import de.effectivetrainings.metrics.MeasurementMetricRegistry;
-import de.effectivetrainings.metrics.ServiceInfoProvider;
-import io.dropwizard.metrics.MetricName;
-import io.dropwizard.metrics.ScheduledReporter;
+import de.effectivetrainings.metrics.InfoProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.influxdb.InfluxDB;
 import org.influxdb.dto.BatchPoints;
@@ -16,23 +14,24 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+
 @Slf4j
 public class InfluxReporter extends ScheduledReporter {
 
     private final InfluxDB influxDB;
     private final String database;
-    private final Optional<ServiceInfoProvider> serviceMetricsMetaDataProvider;
+    private final Optional<InfoProvider> serviceMetricsMetaDataProvider;
     private boolean initialized;
-    private MeasurementMetricRegistry registry;
+    private MetricRegistry registry;
 
-    public InfluxReporter(MeasurementMetricRegistry registry,
+    public InfluxReporter(MetricRegistry registry,
                           String name,
-                          io.dropwizard.metrics.MetricFilter filter,
+                         MetricFilter filter,
                           TimeUnit rateUnit,
                           TimeUnit durationUnit,
                           InfluxDB influxDB,
                           String database,
-                          Optional<ServiceInfoProvider> serviceMetricsMetaDataProvider) {
+                          Optional<InfoProvider> serviceMetricsMetaDataProvider) {
         super(registry, name, filter, rateUnit, durationUnit);
         this.influxDB = influxDB;
         this.database = database;
@@ -40,25 +39,25 @@ public class InfluxReporter extends ScheduledReporter {
         this.registry = registry;
     }
 
-    public InfluxReporter(MeasurementMetricRegistry registry, String name, InfluxDB influxDB, String database,
-                          ServiceInfoProvider serviceInfoProvider
+    public InfluxReporter(MetricRegistry registry, String name, InfluxDB influxDB, String database,
+                          InfoProvider infoProvider
     ) {
-        this(registry, name, io.dropwizard.metrics.MetricFilter.ALL, TimeUnit.MILLISECONDS, TimeUnit.MILLISECONDS, influxDB, database,
-                Optional.of(serviceInfoProvider));
+        this(registry, name,MetricFilter.ALL, TimeUnit.MILLISECONDS, TimeUnit.MILLISECONDS, influxDB, database,
+                Optional.of(infoProvider));
     }
 
-    public InfluxReporter(MeasurementMetricRegistry registry, String name, InfluxDB influxDB, String database) {
-        this(registry, name, io.dropwizard.metrics.MetricFilter.ALL, TimeUnit.MILLISECONDS, TimeUnit.MILLISECONDS, influxDB, database,
+    public InfluxReporter(MetricRegistry registry, String name, InfluxDB influxDB, String database) {
+        this(registry, name,MetricFilter.ALL, TimeUnit.MILLISECONDS, TimeUnit.MILLISECONDS, influxDB, database,
                 Optional.empty());
     }
 
 
     @Override
-    public void report(SortedMap<MetricName, io.dropwizard.metrics.Gauge> gauges,
-                       SortedMap<MetricName, io.dropwizard.metrics.Counter> counters,
-                       SortedMap<MetricName, io.dropwizard.metrics.Histogram> histograms,
-                       SortedMap<MetricName, io.dropwizard.metrics.Meter> meters,
-                       SortedMap<MetricName, io.dropwizard.metrics.Timer> timers
+    public void report(SortedMap<String,Gauge> gauges,
+                       SortedMap<String,Counter> counters,
+                       SortedMap<String,Histogram> histograms,
+                       SortedMap<String,Meter> meters,
+                       SortedMap<String,Timer> timers
     ) {
         log.info("reporting to influx with InfluxDB : {}", influxDB);
         initializeDatabase();
@@ -67,10 +66,8 @@ public class InfluxReporter extends ScheduledReporter {
         List<Point> meterPoints = reportMeters(meters);
         List<Point> timerPoints = reportTimers(timers);
         List<Point> histogramPoints = reportHistograms(histograms);
-        Map<MetricName, Measurement> measurements = registry.getMeasurements();
-        List<Point> measurementPoints = reportMeasurements(registry.getMeasurements());
 
-        List<Point> points = Stream.of(counterPoints, gaugePoints, meterPoints, timerPoints, histogramPoints, measurementPoints)
+        List<Point> points = Stream.of(counterPoints, gaugePoints, meterPoints, timerPoints, histogramPoints)
                 .flatMap
                      (List::stream)
                      .collect(Collectors.toList());
@@ -94,9 +91,6 @@ public class InfluxReporter extends ScheduledReporter {
             //later we might enable that again, but for now, we need to first get it stable.
             log.warn("Cannot report to influx.", e.getMessage());
         }
-
-        //clear measurements, as we want to report them only once.
-        registry.clearMeasurements(measurements.entrySet().stream().map(Map.Entry::getKey).collect(Collectors.toList()));
     }
 
 
@@ -107,7 +101,7 @@ public class InfluxReporter extends ScheduledReporter {
         }
     }
 
-    private List<Point> reportHistograms(SortedMap<MetricName, io.dropwizard.metrics.Histogram> histograms) {
+    private List<Point> reportHistograms(SortedMap<String,Histogram> histograms) {
         List<Point> histogramMetrics = new ArrayList<>();
         histograms.entrySet().stream().forEach(histogram -> {
             Set<InfluxField> fields = new HashSet<>();
@@ -137,7 +131,7 @@ public class InfluxReporter extends ScheduledReporter {
 
     }
 
-    private List<Point> reportTimers(SortedMap<MetricName, io.dropwizard.metrics.Timer> timers) {
+    private List<Point> reportTimers(SortedMap<String,Timer> timers) {
         List<Point> timerMetrics = new ArrayList<>();
         timers.entrySet().stream().forEach(timer -> {
             Set<InfluxField> fields = new HashSet<>();
@@ -175,7 +169,7 @@ public class InfluxReporter extends ScheduledReporter {
         return timerMetrics;
     }
 
-    private List<Point> reportGauges(SortedMap<MetricName, io.dropwizard.metrics.Gauge> gauges) {
+    private List<Point> reportGauges(SortedMap<String,Gauge> gauges) {
         return gauges
                 .entrySet()
                 .stream()
@@ -207,7 +201,7 @@ public class InfluxReporter extends ScheduledReporter {
         return finalValue;
     }
 
-    private List<Point> reportCounters(SortedMap<MetricName, io.dropwizard.metrics.Counter> counters) {
+    private List<Point> reportCounters(SortedMap<String,Counter> counters) {
         return counters
                 .entrySet()
                 .stream()
@@ -220,7 +214,7 @@ public class InfluxReporter extends ScheduledReporter {
                 .collect(Collectors.toList());
     }
 
-    private List<Point> reportMeters(SortedMap<MetricName, io.dropwizard.metrics.Meter> meters) {
+    private List<Point> reportMeters(SortedMap<String,Meter> meters) {
         List<Point> meterMetrics = new ArrayList<>();
         meters.entrySet().stream().forEach(meter -> {
             Set<InfluxField> fields = new HashSet<>();
@@ -239,18 +233,6 @@ public class InfluxReporter extends ScheduledReporter {
         return meterMetrics;
     }
 
-    private List<Point> reportMeasurements(SortedMap<MetricName, Measurement> measurements) {
-        List<Point> measurementMetrics = new ArrayList<>();
-        measurements.entrySet().stream().forEach(measurement -> {
-            final Set<InfluxField> fields = measurement.getValue().getValue().entrySet().stream().map(
-                    entry -> new InfluxField(entry.getKey(), entry.getValue(), new ArrayList<>())).collect(Collectors
-                    .toSet());
-            measurementMetrics.add(point(measurement.getKey(), fields));
-
-        });
-        return measurementMetrics;
-    }
-
     private InfluxField field(String key, Object value) {
         return new InfluxField(key, value, Lists.newArrayList());
     }
@@ -259,9 +241,9 @@ public class InfluxReporter extends ScheduledReporter {
         return name;
     }
 
-    private Point point(MetricName metricName, Set<InfluxField> fields) {
+    private Point point(String name, Set<InfluxField> fields) {
         final Point.Builder pointBuilder =
-                Point.measurement(sanitizeName(metricName.getKey())).tag(metricName.getTags());
+                Point.measurement(sanitizeName(name));
         fields.stream().forEach(field -> pointBuilder.field(field.getName(), field.getValue()));
         return pointBuilder.build();
     }
